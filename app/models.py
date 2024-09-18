@@ -25,7 +25,6 @@ class Like(db.Model):
     post_id: so.Mapped[int] = so.mapped_column(sa.ForeignKey('post.id'), nullable=False)
     user_id: so.Mapped[int] = so.mapped_column(sa.ForeignKey('user.id'), nullable=False)
     timestamp: so.Mapped[datetime] = so.mapped_column(default=lambda: datetime.now(timezone.utc))
-
     user: so.Mapped['User'] = so.relationship(back_populates="likes")
     post: so.Mapped['Post'] = so.relationship(back_populates="likes")
 
@@ -37,7 +36,6 @@ class Comment(db.Model):
     user_id: so.Mapped[int] = so.mapped_column(sa.ForeignKey('user.id'), nullable=False)
     content: so.Mapped[str] = so.mapped_column(sa.Text, nullable=False)
     timestamp: so.Mapped[datetime] = so.mapped_column(default=lambda: datetime.now(timezone.utc))
-
     user: so.Mapped['User'] = so.relationship(back_populates="comments")
     post: so.Mapped['Post'] = so.relationship(back_populates="comments")
 
@@ -119,6 +117,12 @@ followers = sa.Table(
               primary_key=True)
 )
 
+likes = db.Table(
+    'likes',
+    db.Column('user_id', db.Integer, db.ForeignKey('user.id')),
+    db.Column('post_id', db.Integer, db.ForeignKey('post.id'))
+)
+
 
 class User(PaginatedAPIMixin, UserMixin, db.Model):
     id: so.Mapped[int] = so.mapped_column(primary_key=True)
@@ -152,6 +156,7 @@ class User(PaginatedAPIMixin, UserMixin, db.Model):
     tasks: so.WriteOnlyMapped['Task'] = so.relationship(back_populates='user')
     likes: so.WriteOnlyMapped['Like'] = so.relationship('Like', back_populates='user')
     comments: so.WriteOnlyMapped['Comment'] = so.relationship('Comment', back_populates='user')
+    liked = db.relationship('Post', secondary=likes,backref=db.backref('likers', lazy='dynamic'), lazy='dynamic')
 
     def __repr__(self):
         return '<User {}>'.format(self.username)
@@ -203,8 +208,16 @@ class User(PaginatedAPIMixin, UserMixin, db.Model):
             .order_by(Post.timestamp.desc())
         )
         
-    def has_liked(self, post):
-        return Like.query.filter_by(user_id=self.id, post_id=post.id).count() > 0
+    def like_post(self, post):
+        if not self.has_liked_post(post):
+            self.liked.append(post)
+
+    def unlike_post(self, post):
+        if self.has_liked_post(post):
+            self.liked.remove(post)
+
+    def has_liked_post(self, post):
+        return self.liked.filter(likes.c.post_id == post.id).count() > 0
 
     def get_reset_password_token(self, expires_in=600):
         return jwt.encode(
@@ -318,8 +331,8 @@ class Post(SearchableMixin, db.Model):
     body: so.Mapped[str] = so.mapped_column(sa.String(140))
     timestamp: so.Mapped[datetime] = so.mapped_column(index=True, default=lambda: datetime.now(timezone.utc))
     user_id: so.Mapped[int] = so.mapped_column(sa.ForeignKey(User.id), index=True)
+    likers = db.relationship('User', secondary=likes, backref='liked_posts', lazy='dynamic')
     language: so.Mapped[Optional[str]] = so.mapped_column(sa.String(5))
-
     author: so.Mapped['User'] = so.relationship(back_populates='posts')
     likes: so.Mapped['Like'] = so.relationship('Like', back_populates='post', cascade="all, delete-orphan")
     comments: so.Mapped['Comment'] = so.relationship('Comment', back_populates='post', cascade="all, delete-orphan")

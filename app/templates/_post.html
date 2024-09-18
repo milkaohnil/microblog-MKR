@@ -28,16 +28,16 @@
             
             <!-- Like/Unlike Button -->
             <div class="like-section">
-                {% if current_user.has_liked(post) %}
-                    <form action="{{ url_for('main.like_post', post_id=post.id) }}" method="post">
+                {% if current_user.has_liked_post(post) %}
+                    <form action="{{ url_for('unlike_post', post_id=post.id) }}" method="post">
                         <button type="submit" class="btn btn-danger">Unlike</button>
                     </form>
                 {% else %}
-                    <form action="{{ url_for('main.like_post', post_id=post.id) }}" method="post">
+                    <form action="{{ url_for('like_post', post_id=post.id) }}" method="post">
                         <button type="submit" class="btn btn-success">Like</button>
                     </form>
                 {% endif %}
-                <p>Likes: {{ post.likes.count() }}</p>
+                <p>Likes: {{ post.likers.count() }}</p>
             </div>
 
             <!-- Comments Section -->
