@@ -29,7 +29,6 @@ class EditProfileForm(FlaskForm):
 class EmptyForm(FlaskForm):
     submit = SubmitField('Submit')
 
-
 class PostForm(FlaskForm):
     post = TextAreaField(_l('Say something'), validators=[
         DataRequired(), Length(min=1, max=140)])
@@ -50,4 +49,9 @@ class SearchForm(FlaskForm):
 class MessageForm(FlaskForm):
     message = TextAreaField(_l('Message'), validators=[
         DataRequired(), Length(min=1, max=140)])
+    submit = SubmitField(_l('Submit'))
+
+class CommentForm(FlaskForm):
+    body = TextAreaField(_l('Enter your comment'), validators=[
+        DataRequired(), Length(min=1, max=200)])
     submit = SubmitField(_l('Submit'))

@@ -1,16 +1,15 @@
 from datetime import datetime, timezone
-from flask import render_template, flash, redirect, url_for, request, g, \
-    current_app
+from flask import render_template, flash, redirect, url_for, request, g, current_app, jsonify
 from flask_login import current_user, login_required
 from flask_babel import _, get_locale
 import sqlalchemy as sa
 from langdetect import detect, LangDetectException
 from app import db
-from app.main.forms import EditProfileForm, EmptyForm, PostForm, SearchForm, \
-    MessageForm
-from app.models import User, Post, Message, Notification
+from app.main.forms import EditProfileForm, EmptyForm, PostForm, SearchForm, MessageForm, CommentForm
+from app.models import User, Post, Message, Notification, Like, Comment
 from app.translate import translate
 from app.main import bp
+
 
 
 @bp.before_app_request
@@ -32,23 +31,25 @@ def index():
             language = detect(form.post.data)
         except LangDetectException:
             language = ''
-        post = Post(body=form.post.data, author=current_user,
-                    language=language)
+        post = Post(body=form.post.data, author=current_user, language=language)
         db.session.add(post)
         db.session.commit()
         flash(_('Your post is now live!'))
         return redirect(url_for('main.index'))
+    
     page = request.args.get('page', 1, type=int)
     posts = db.paginate(current_user.following_posts(), page=page,
                         per_page=current_app.config['POSTS_PER_PAGE'],
                         error_out=False)
-    next_url = url_for('main.index', page=posts.next_num) \
-        if posts.has_next else None
-    prev_url = url_for('main.index', page=posts.prev_num) \
-        if posts.has_prev else None
+    
+    next_url = url_for('main.index', page=posts.next_num) if posts.has_next else None
+    prev_url = url_for('main.index', page=posts.prev_num) if posts.has_prev else None
+    
+    # Include comment form and like status in the rendered page
+    comment_form = CommentForm()
     return render_template('index.html', title=_('Home'), form=form,
-                           posts=posts.items, next_url=next_url,
-                           prev_url=prev_url)
+                           posts=posts.items, next_url=next_url, prev_url=prev_url,
+                           comment_form=comment_form, like_status={post.id: current_user.has_liked_post(post) for post in posts.items})
 
 
 @bp.route('/explore')
@@ -239,3 +240,76 @@ def notifications():
         'data': n.get_data(),
         'timestamp': n.timestamp
     } for n in notifications]
+
+# New route to handle post likes
+@bp.route('/like/<int:post_id>', methods=['POST'])
+@login_required
+def like_post(post_id):
+    post = db.session.scalar(sa.select(Post).where(Post.id == post_id))
+    if not post:
+        return jsonify({'error': 'Post not found'}), 404
+    
+    if current_user.has_liked_post(post):
+        return jsonify({'error': 'Already liked'}), 400
+    
+    like = Like(user_id=current_user.id, post_id=post_id)
+    db.session.add(like)
+    db.session.commit()
+    
+    return jsonify({
+        'message': 'Post liked',
+        'like_count': post.likes.count()
+    })
+
+# New route to handle post unlikes
+@bp.route('/unlike/<int:post_id>', methods=['POST'])
+@login_required
+def unlike_post(post_id):
+    post = db.session.scalar(sa.select(Post).where(Post.id == post_id))
+    if not post:
+        return jsonify({'error': 'Post not found'}), 404
+    
+    like = Like.query.filter_by(user_id=current_user.id, post_id=post_id).first()
+    if not like:
+        return jsonify({'error': 'Not liked yet'}), 400
+    
+    db.session.delete(like)
+    db.session.commit()
+    
+    return jsonify({
+        'message': 'Post unliked',
+        'like_count': post.likes.count()
+    })
+
+# New route to add a comment to a post
+@bp.route('/comment/<int:post_id>', methods=['POST'])
+@login_required
+def add_comment(post_id):
+    post = db.session.scalar(sa.select(Post).where(Post.id == post_id))
+    if not post:
+        flash(_('Post not found.'))
+        return redirect(url_for('main.index'))
+
+    form = CommentForm()
+    if form.validate_on_submit():
+        comment = Comment(body=form.body.data, author=current_user, post=post)
+        db.session.add(comment)
+        db.session.commit()
+        flash(_('Your comment has been added.'))
+    
+    return redirect(url_for('main.index'))
+
+# New route to retrieve comments for a specific post
+@bp.route('/comments/<int:post_id>', methods=['GET'])
+@login_required
+def get_comments(post_id):
+    post = db.session.scalar(sa.select(Post).where(Post.id == post_id))
+    if not post:
+        return jsonify({'error': 'Post not found'}), 404
+
+    comments = post.comments.order_by(Comment.timestamp.asc()).all()
+    return jsonify([{
+        'author': comment.author.username,
+        'body': comment.body,
+        'timestamp': comment.timestamp
+    } for comment in comments])

@@ -14,7 +14,32 @@ import redis
 import rq
 from app import db, login
 from app.search import add_to_index, remove_from_index, query_index
+from datetime import datetime, timezone, timedelta
+import sqlalchemy as sa
+import sqlalchemy.orm as so
+from app import db
 
+# New Like model
+class Like(db.Model):
+    id: so.Mapped[int] = so.mapped_column(primary_key=True)
+    post_id: so.Mapped[int] = so.mapped_column(sa.ForeignKey('post.id'), nullable=False)
+    user_id: so.Mapped[int] = so.mapped_column(sa.ForeignKey('user.id'), nullable=False)
+    timestamp: so.Mapped[datetime] = so.mapped_column(default=lambda: datetime.now(timezone.utc))
+
+    user: so.Mapped['User'] = so.relationship(back_populates="likes")
+    post: so.Mapped['Post'] = so.relationship(back_populates="likes")
+
+
+# New Comment model
+class Comment(db.Model):
+    id: so.Mapped[int] = so.mapped_column(primary_key=True)
+    post_id: so.Mapped[int] = so.mapped_column(sa.ForeignKey('post.id'), nullable=False)
+    user_id: so.Mapped[int] = so.mapped_column(sa.ForeignKey('user.id'), nullable=False)
+    content: so.Mapped[str] = so.mapped_column(sa.Text, nullable=False)
+    timestamp: so.Mapped[datetime] = so.mapped_column(default=lambda: datetime.now(timezone.utc))
+
+    user: so.Mapped['User'] = so.relationship(back_populates="comments")
+    post: so.Mapped['Post'] = so.relationship(back_populates="comments")
 
 class SearchableMixin:
     @classmethod
@@ -97,10 +122,8 @@ followers = sa.Table(
 
 class User(PaginatedAPIMixin, UserMixin, db.Model):
     id: so.Mapped[int] = so.mapped_column(primary_key=True)
-    username: so.Mapped[str] = so.mapped_column(sa.String(64), index=True,
-                                                unique=True)
-    email: so.Mapped[str] = so.mapped_column(sa.String(120), index=True,
-                                             unique=True)
+    username: so.Mapped[str] = so.mapped_column(sa.String(64), index=True, unique=True)
+    email: so.Mapped[str] = so.mapped_column(sa.String(120), index=True, unique=True)
     password_hash: so.Mapped[Optional[str]] = so.mapped_column(sa.String(256))
     about_me: so.Mapped[Optional[str]] = so.mapped_column(sa.String(140))
     last_seen: so.Mapped[Optional[datetime]] = so.mapped_column(
@@ -127,6 +150,8 @@ class User(PaginatedAPIMixin, UserMixin, db.Model):
     notifications: so.WriteOnlyMapped['Notification'] = so.relationship(
         back_populates='user')
     tasks: so.WriteOnlyMapped['Task'] = so.relationship(back_populates='user')
+    likes: so.WriteOnlyMapped['Like'] = so.relationship('Like', back_populates='user')
+    comments: so.WriteOnlyMapped['Comment'] = so.relationship('Comment', back_populates='user')
 
     def __repr__(self):
         return '<User {}>'.format(self.username)
@@ -177,6 +202,9 @@ class User(PaginatedAPIMixin, UserMixin, db.Model):
             .group_by(Post)
             .order_by(Post.timestamp.desc())
         )
+        
+    def has_liked(self, post):
+        return Like.query.filter_by(user_id=self.id, post_id=post.id).count() > 0
 
     def get_reset_password_token(self, expires_in=600):
         return jwt.encode(
@@ -288,13 +316,16 @@ class Post(SearchableMixin, db.Model):
     __searchable__ = ['body']
     id: so.Mapped[int] = so.mapped_column(primary_key=True)
     body: so.Mapped[str] = so.mapped_column(sa.String(140))
-    timestamp: so.Mapped[datetime] = so.mapped_column(
-        index=True, default=lambda: datetime.now(timezone.utc))
-    user_id: so.Mapped[int] = so.mapped_column(sa.ForeignKey(User.id),
-                                               index=True)
+    timestamp: so.Mapped[datetime] = so.mapped_column(index=True, default=lambda: datetime.now(timezone.utc))
+    user_id: so.Mapped[int] = so.mapped_column(sa.ForeignKey(User.id), index=True)
     language: so.Mapped[Optional[str]] = so.mapped_column(sa.String(5))
 
-    author: so.Mapped[User] = so.relationship(back_populates='posts')
+    author: so.Mapped['User'] = so.relationship(back_populates='posts')
+    likes: so.Mapped['Like'] = so.relationship('Like', back_populates='post', cascade="all, delete-orphan")
+    comments: so.Mapped['Comment'] = so.relationship('Comment', back_populates='post', cascade="all, delete-orphan")
+
+    def like_count(self):
+        return db.session.scalar(sa.select(sa.func.count()).select_from(Like).where(Like.post_id == self.id))
 
     def __repr__(self):
         return '<Post {}>'.format(self.body)
